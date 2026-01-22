@@ -1,0 +1,25 @@
+{
+  "name": "@pulsar/vite-plugin",
+  "version": "0.1.0",
+  "description": "Vite plugin for pulsar framework",
+  "type": "module",
+  "main": "./index.ts",
+  "exports": {
+    ".": "./index.ts"
+  },
+  "keywords": [
+    "vite",
+    "vite-plugin",
+    "pulsar",
+    "tsx",
+    "typescript"
+  ],
+  "peerDependencies": {
+    "vite": "^5.0.0 || ^6.0.0"
+  },
+  "dependencies": {
+    "@pulsar/transformer": "workspace:*",
+    "typescript": "^5.9.3"
+  },
+  "devDependencies": {}
+}
