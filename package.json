@@ -3,9 +3,9 @@
   "version": "0.1.0",
   "description": "Vite plugin for pulsar framework",
   "type": "module",
-  "main": "./index.ts",
+  "main": "./src/index.ts",
   "exports": {
-    ".": "./index.ts"
+    ".": "./src/index.ts"
   },
   "keywords": [
     "vite",
