@@ -3,9 +3,18 @@
   "version": "0.7.0-alpha",
   "description": "Vite plugin for the Pulsar framework",
   "type": "module",
-  "main": "./vite-plugin-temp/src/index.ts",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
-    ".": "./vite-plugin-temp/src/index.ts"
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "clean": "rimraf dist"
   },
   "keywords": [
     "pulsar",

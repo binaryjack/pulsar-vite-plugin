@@ -27,8 +27,9 @@ export function pulsarPlugin(): any {
       
       console.log('[pulsar] Processing:', id)
       
-      // Import the transformer using relative path to avoid ES module resolution issues
-      const { default: transformer } = await import('../transformer/index.js')
+      // Import the transformer from workspace package (default export)
+      const transformerModule = await import('@pulsar-framework/transformer')
+      const transformer = transformerModule.default
       
       const compilerOptions: ts.CompilerOptions = {
         target: ts.ScriptTarget.ESNext,
