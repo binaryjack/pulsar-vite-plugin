@@ -1,14 +1,14 @@
-import * as ts from 'typescript'
+import * as ts from 'typescript';
 
 /**
  * Vite plugin for pulsar framework
  * Transforms TSX syntax into direct DOM manipulation using the pulsar transformer
- * 
+ *
  * @example
  * ```ts
  * import { defineConfig } from 'vite'
  * import { pulsarPlugin } from '@pulsar/vite-plugin'
- * 
+ *
  * export default defineConfig({
  *   plugins: [pulsarPlugin()]
  * })
@@ -18,19 +18,19 @@ export function pulsarPlugin(): any {
   return {
     name: 'pulsar-transformer',
     enforce: 'pre',
-    
+
     async transform(code: string, id: string) {
       // Only transform .tsx files
       if (!id.endsWith('.tsx')) {
-        return null
+        return null;
       }
-      
-      console.log('[pulsar] Processing:', id)
-      
+
+      console.log('[pulsar] Processing:', id);
+
       // Import the transformer from workspace package (default export)
-      const transformerModule = await import('@pulsar-framework/transformer')
-      const transformer = transformerModule.default
-      
+      const transformerModule = await import('@pulsar-framework/transformer');
+      const transformer = transformerModule.default;
+
       const compilerOptions: ts.CompilerOptions = {
         target: ts.ScriptTarget.ESNext,
         module: ts.ModuleKind.ESNext,
@@ -38,20 +38,20 @@ export function pulsarPlugin(): any {
         strict: false,
         esModuleInterop: true,
         skipLibCheck: true,
-      }
-      
+      };
+
       // Create a compiler host
-      const host = ts.createCompilerHost(compilerOptions)
-      
+      const host = ts.createCompilerHost(compilerOptions);
+
       // Override readFile to return our code
-      const originalReadFile = host.readFile
+      const originalReadFile = host.readFile;
       host.readFile = (fileName) => {
         if (fileName === id) {
-          return code
+          return code;
         }
-        return originalReadFile.call(host, fileName)
-      }
-      
+        return originalReadFile.call(host, fileName);
+      };
+
       // Create source file
       const sourceFile = ts.createSourceFile(
         id,
@@ -59,54 +59,71 @@ export function pulsarPlugin(): any {
         ts.ScriptTarget.ESNext,
         true,
         ts.ScriptKind.TSX
-      )
-      
+      );
+
       // Create program with the source file
-      const program = ts.createProgram([id], compilerOptions, host)
-      
+      const program = ts.createProgram([id], compilerOptions, host);
+
       // Get the transformer factory
-      const transformerFactory = transformer(program)
-      
+      const transformerFactory = transformer(program);
+
       // Transform the source file
-      const result = ts.transform(sourceFile, [transformerFactory])
-      
+      const result = ts.transform(sourceFile, [transformerFactory]);
+
       // Check for any remaining JSX nodes
-      const transformedFile = result.transformed[0]
-      let hasJsxNodes = false
+      const transformedFile = result.transformed[0];
+      let hasJsxNodes = false;
       const checker = (node: ts.Node): ts.Node => {
-        if (ts.isJsxElement(node) || ts.isJsxSelfClosingElement(node) || 
-            ts.isJsxExpression(node) || ts.isJsxFragment(node)) {
-          hasJsxNodes = true
-          console.error('[pulsar] Found untransformed JSX node:', ts.SyntaxKind[node.kind], 'at line', sourceFile.getLineAndCharacterOfPosition(node.pos).line + 1)
+        if (
+          ts.isJsxElement(node) ||
+          ts.isJsxSelfClosingElement(node) ||
+          ts.isJsxExpression(node) ||
+          ts.isJsxFragment(node)
+        ) {
+          hasJsxNodes = true;
+          console.error(
+            '[pulsar] Found untransformed JSX node:',
+            ts.SyntaxKind[node.kind],
+            'at line',
+            sourceFile.getLineAndCharacterOfPosition(node.pos).line + 1
+          );
         }
-        return ts.visitEachChild(node, checker, undefined)
-      }
-      ts.visitNode(transformedFile, checker)
-      
+        return ts.visitEachChild(node, checker, undefined);
+      };
+      ts.visitNode(transformedFile, checker);
+
       if (hasJsxNodes) {
-        console.error('[pulsar] ERROR: Transformed AST still contains JSX nodes!')
+        console.error('[pulsar] ERROR: Transformed AST still contains JSX nodes!');
       }
-      
+
       // Print the transformed file
-      const printer = ts.createPrinter()
-      const outputCode = printer.printFile(transformedFile)
-      
+      const printer = ts.createPrinter();
+      const outputCode = printer.printFile(transformedFile);
+
       // Clean up
-      result.dispose()
-      
+      result.dispose();
+
       if (outputCode.includes('React')) {
-        console.warn('[pulsar] WARNING: React still found in output!')
+        console.warn('[pulsar] WARNING: React still found in output!');
       }
-      
-      console.log('[pulsar] Transformed', id.split('/').pop())
-      
+
+      const fileName = id.split('/').pop();
+      console.log('[pulsar] Transformed', fileName);
+
+      // Debug output for app.tsx to see what's being generated
+      if (fileName === 'app.tsx') {
+        console.log('[pulsar] ========== TRANSFORMED app.tsx ==========');
+        console.log(outputCode);
+        console.log('[pulsar] ========== END TRANSFORMED CODE ==========');
+      }
+
       return {
         code: outputCode,
-        map: null
-      }
-    }
-  }
+        map: null,
+      };
+    },
+  };
 }
 
 // Default export for convenience
-export default pulsarPlugin
+export default pulsarPlugin;
