@@ -1,4 +1,5 @@
 import * as ts from 'typescript';
+import type { Plugin } from 'vite';
 
 /**
  * Vite plugin for pulsar framework
@@ -14,9 +15,22 @@ import * as ts from 'typescript';
  * })
  * ```
  */
-export function pulsarPlugin(): any {
+// Cache the transformer to avoid re-importing on every file
+let cachedTransformer: any = null;
+let cachedProgram: ts.Program | null = null;
+
+const compilerOptions: ts.CompilerOptions = {
+  target: ts.ScriptTarget.ESNext,
+  module: ts.ModuleKind.ESNext,
+  jsx: ts.JsxEmit.Preserve,
+  strict: false,
+  esModuleInterop: true,
+  skipLibCheck: true,
+};
+
+function pulsarPlugin(): Plugin {
   return {
-    name: 'pulsar-transformer',
+    name: 'pulsar-vite-plugin',
     enforce: 'pre',
 
     async transform(code: string, id: string) {
@@ -25,34 +39,16 @@ export function pulsarPlugin(): any {
         return null;
       }
 
-      console.log('[pulsar] Processing:', id);
+      const startTime = performance.now();
+      const fileName = id.split('/').pop();
 
-      // Import the transformer from workspace package (default export)
-      const transformerModule = await import('@pulsar-framework/transformer');
-      const transformer = transformerModule.default;
+      // Import the transformer once and cache it
+      if (!cachedTransformer) {
+        const transformerModule = await import('@pulsar-framework/transformer');
+        cachedTransformer = transformerModule.default;
+      }
 
-      const compilerOptions: ts.CompilerOptions = {
-        target: ts.ScriptTarget.ESNext,
-        module: ts.ModuleKind.ESNext,
-        jsx: ts.JsxEmit.Preserve, // Keep JSX so our transformer can process it
-        strict: false,
-        esModuleInterop: true,
-        skipLibCheck: true,
-      };
-
-      // Create a compiler host
-      const host = ts.createCompilerHost(compilerOptions);
-
-      // Override readFile to return our code
-      const originalReadFile = host.readFile;
-      host.readFile = (fileName) => {
-        if (fileName === id) {
-          return code;
-        }
-        return originalReadFile.call(host, fileName);
-      };
-
-      // Create source file
+      // Create source file directly - no need for full Program
       const sourceFile = ts.createSourceFile(
         id,
         code,
@@ -61,40 +57,18 @@ export function pulsarPlugin(): any {
         ts.ScriptKind.TSX
       );
 
-      // Create program with the source file
-      const program = ts.createProgram([id], compilerOptions, host);
+      // Create a minimal program only once for the transformer factory
+      if (!cachedProgram) {
+        const host = ts.createCompilerHost(compilerOptions);
+        cachedProgram = ts.createProgram([id], compilerOptions, host);
+      }
 
-      // Get the transformer factory
-      const transformerFactory = transformer(program);
+      // Get the transformer factory using cached transformer and program
+      const transformerFactory = cachedTransformer(cachedProgram);
 
       // Transform the source file
       const result = ts.transform(sourceFile, [transformerFactory]);
-
-      // Check for any remaining JSX nodes
       const transformedFile = result.transformed[0];
-      let hasJsxNodes = false;
-      const checker = (node: ts.Node): ts.Node => {
-        if (
-          ts.isJsxElement(node) ||
-          ts.isJsxSelfClosingElement(node) ||
-          ts.isJsxExpression(node) ||
-          ts.isJsxFragment(node)
-        ) {
-          hasJsxNodes = true;
-          console.error(
-            '[pulsar] Found untransformed JSX node:',
-            ts.SyntaxKind[node.kind],
-            'at line',
-            sourceFile.getLineAndCharacterOfPosition(node.pos).line + 1
-          );
-        }
-        return ts.visitEachChild(node, checker, undefined);
-      };
-      ts.visitNode(transformedFile, checker);
-
-      if (hasJsxNodes) {
-        console.error('[pulsar] ERROR: Transformed AST still contains JSX nodes!');
-      }
 
       // Print the transformed file
       const printer = ts.createPrinter();
@@ -103,19 +77,9 @@ export function pulsarPlugin(): any {
       // Clean up
       result.dispose();
 
-      if (outputCode.includes('React')) {
-        console.warn('[pulsar] WARNING: React still found in output!');
-      }
-
-      const fileName = id.split('/').pop();
-      console.log('[pulsar] Transformed', fileName);
-
-      // Debug output for app.tsx to see what's being generated
-      if (fileName === 'app.tsx') {
-        console.log('[pulsar] ========== TRANSFORMED app.tsx ==========');
-        console.log(outputCode);
-        console.log('[pulsar] ========== END TRANSFORMED CODE ==========');
-      }
+      const endTime = performance.now();
+      const duration = (endTime - startTime).toFixed(2);
+      console.log(`[pulsar] ${fileName} transformed in ${duration}ms`);
 
       return {
         code: outputCode,
@@ -125,5 +89,8 @@ export function pulsarPlugin(): any {
   };
 }
 
-// Default export for convenience
+// Named export for convenience
+export { pulsarPlugin };
+
+// Default export
 export default pulsarPlugin;
