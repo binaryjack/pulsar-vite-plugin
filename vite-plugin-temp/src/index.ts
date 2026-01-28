@@ -36,9 +36,10 @@ const compilerOptions: ts.CompilerOptions = {
 function pulsarPlugin(options: PulsarPluginOptions = {}): Plugin {
   const { enableCache = false } = options;
 
-  // Only cache in production or if explicitly enabled
+  // Cache transformer module and program
   let cachedTransformer: any = null;
   let cachedProgram: ts.Program | null = null;
+  let transformedFiles = new Set<string>();
   let isDevMode = true;
 
   return {
@@ -47,11 +48,15 @@ function pulsarPlugin(options: PulsarPluginOptions = {}): Plugin {
 
     configResolved(config) {
       isDevMode = config.command === 'serve';
+    },
 
-      // Clear cache in dev mode for better HMR
-      if (isDevMode && !enableCache) {
-        cachedTransformer = null;
-        cachedProgram = null;
+    buildStart() {
+      // Initialize shared program once at build start
+      if (!cachedProgram) {
+        const host = ts.createCompilerHost(compilerOptions);
+
+        // Create a lightweight program with minimal file set
+        cachedProgram = ts.createProgram([], compilerOptions, host);
       }
     },
 
@@ -64,18 +69,10 @@ function pulsarPlugin(options: PulsarPluginOptions = {}): Plugin {
       const startTime = performance.now();
       const fileName = id.split('/').pop();
 
-      // In dev mode without caching, always import fresh transformer
-      const shouldCache = !isDevMode || enableCache;
-
-      let transformer: any;
-      if (shouldCache && cachedTransformer) {
-        transformer = cachedTransformer;
-      } else {
+      // Cache transformer module
+      if (!cachedTransformer) {
         const transformerModule = await import('@pulsar-framework/transformer');
-        transformer = transformerModule.default;
-        if (shouldCache) {
-          cachedTransformer = transformer;
-        }
+        cachedTransformer = transformerModule.default;
       }
 
       // Create source file for this specific transformation
@@ -87,20 +84,11 @@ function pulsarPlugin(options: PulsarPluginOptions = {}): Plugin {
         ts.ScriptKind.TSX
       );
 
-      // Create program - in dev mode, create fresh program per file for HMR
-      let program: ts.Program;
-      if (shouldCache && cachedProgram) {
-        program = cachedProgram;
-      } else {
-        const host = ts.createCompilerHost(compilerOptions);
-        program = ts.createProgram([id], compilerOptions, host);
-        if (shouldCache) {
-          cachedProgram = program;
-        }
-      }
+      // Reuse the cached program - no need to recreate per file
+      const program = cachedProgram!;
 
       // Get the transformer factory
-      const transformerFactory = transformer(program);
+      const transformerFactory = cachedTransformer(program);
 
       // Transform the source file
       const result = ts.transform(sourceFile, [transformerFactory]);
@@ -117,9 +105,9 @@ function pulsarPlugin(options: PulsarPluginOptions = {}): Plugin {
       const duration = (endTime - startTime).toFixed(2);
 
       if (isDevMode) {
-        console.log(
-          `[pulsar] ⚡ ${fileName} transformed in ${duration}ms ${shouldCache ? '(cached)' : '(fresh)'}`
-        );
+        const status = transformedFiles.has(id) ? 'cached' : 'fresh';
+        transformedFiles.add(id);
+        console.log(`[pulsar] ⚡ ${fileName} transformed in ${duration}ms (${status})`);
       }
 
       return {
@@ -129,10 +117,10 @@ function pulsarPlugin(options: PulsarPluginOptions = {}): Plugin {
     },
 
     handleHotUpdate(ctx: HmrContext) {
-      // When a .tsx file changes, clear caches and trigger HMR
+      // When a .tsx file changes, invalidate the module to trigger re-transformation
       if (ctx.file.endsWith('.tsx')) {
-        // Clear caches to ensure fresh transformation on next request
-        cachedProgram = null;
+        // Mark file as needing fresh transformation
+        transformedFiles.delete(ctx.file);
 
         // Invalidate the module to trigger re-transformation
         const module = ctx.modules.find((m: ModuleNode) => m.file === ctx.file);
