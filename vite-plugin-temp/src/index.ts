@@ -1,5 +1,5 @@
 import * as ts from 'typescript';
-import type { Plugin } from 'vite';
+import type { HmrContext, ModuleNode, Plugin } from 'vite';
 
 /**
  * Vite plugin for pulsar framework
@@ -15,9 +15,14 @@ import type { Plugin } from 'vite';
  * })
  * ```
  */
-// Cache the transformer to avoid re-importing on every file
-let cachedTransformer: any = null;
-let cachedProgram: ts.Program | null = null;
+
+export interface PulsarPluginOptions {
+  /**
+   * Enable caching for production builds
+   * @default false (caching disabled for better HMR)
+   */
+  enableCache?: boolean;
+}
 
 const compilerOptions: ts.CompilerOptions = {
   target: ts.ScriptTarget.ESNext,
@@ -28,10 +33,27 @@ const compilerOptions: ts.CompilerOptions = {
   skipLibCheck: true,
 };
 
-function pulsarPlugin(): Plugin {
+function pulsarPlugin(options: PulsarPluginOptions = {}): Plugin {
+  const { enableCache = false } = options;
+
+  // Only cache in production or if explicitly enabled
+  let cachedTransformer: any = null;
+  let cachedProgram: ts.Program | null = null;
+  let isDevMode = true;
+
   return {
     name: 'pulsar-vite-plugin',
     enforce: 'pre',
+
+    configResolved(config) {
+      isDevMode = config.command === 'serve';
+
+      // Clear cache in dev mode for better HMR
+      if (isDevMode && !enableCache) {
+        cachedTransformer = null;
+        cachedProgram = null;
+      }
+    },
 
     async transform(code: string, id: string) {
       // Only transform .tsx files
@@ -42,13 +64,21 @@ function pulsarPlugin(): Plugin {
       const startTime = performance.now();
       const fileName = id.split('/').pop();
 
-      // Import the transformer once and cache it
-      if (!cachedTransformer) {
+      // In dev mode without caching, always import fresh transformer
+      const shouldCache = !isDevMode || enableCache;
+
+      let transformer: any;
+      if (shouldCache && cachedTransformer) {
+        transformer = cachedTransformer;
+      } else {
         const transformerModule = await import('@pulsar-framework/transformer');
-        cachedTransformer = transformerModule.default;
+        transformer = transformerModule.default;
+        if (shouldCache) {
+          cachedTransformer = transformer;
+        }
       }
 
-      // Create source file directly - no need for full Program
+      // Create source file for this specific transformation
       const sourceFile = ts.createSourceFile(
         id,
         code,
@@ -57,14 +87,20 @@ function pulsarPlugin(): Plugin {
         ts.ScriptKind.TSX
       );
 
-      // Create a minimal program only once for the transformer factory
-      if (!cachedProgram) {
+      // Create program - in dev mode, create fresh program per file for HMR
+      let program: ts.Program;
+      if (shouldCache && cachedProgram) {
+        program = cachedProgram;
+      } else {
         const host = ts.createCompilerHost(compilerOptions);
-        cachedProgram = ts.createProgram([id], compilerOptions, host);
+        program = ts.createProgram([id], compilerOptions, host);
+        if (shouldCache) {
+          cachedProgram = program;
+        }
       }
 
-      // Get the transformer factory using cached transformer and program
-      const transformerFactory = cachedTransformer(cachedProgram);
+      // Get the transformer factory
+      const transformerFactory = transformer(program);
 
       // Transform the source file
       const result = ts.transform(sourceFile, [transformerFactory]);
@@ -79,12 +115,34 @@ function pulsarPlugin(): Plugin {
 
       const endTime = performance.now();
       const duration = (endTime - startTime).toFixed(2);
-      console.log(`[pulsar] ${fileName} transformed in ${duration}ms`);
+
+      if (isDevMode) {
+        console.log(
+          `[pulsar] ⚡ ${fileName} transformed in ${duration}ms ${shouldCache ? '(cached)' : '(fresh)'}`
+        );
+      }
 
       return {
         code: outputCode,
         map: null,
       };
+    },
+
+    handleHotUpdate(ctx: HmrContext) {
+      // When a .tsx file changes, clear caches and trigger HMR
+      if (ctx.file.endsWith('.tsx')) {
+        // Clear caches to ensure fresh transformation on next request
+        cachedProgram = null;
+
+        // Invalidate the module to trigger re-transformation
+        const module = ctx.modules.find((m: ModuleNode) => m.file === ctx.file);
+        if (module) {
+          ctx.server.moduleGraph.invalidateModule(module);
+        }
+
+        // Return modules to update (let Vite handle the HMR)
+        return ctx.modules;
+      }
     },
   };
 }
